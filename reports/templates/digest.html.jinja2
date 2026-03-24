@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #FAF8F5; padding: 40px; color: #1A1A1A; }
+  .header { margin-bottom: 32px; }
+  .header h1 { font-size: 22px; font-weight: 700; color: #1A1A1A; }
+  .header .meta { font-size: 12px; color: #8B8480; margin-top: 6px; }
+  .stats { display: flex; gap: 16px; margin-bottom: 32px; }
+  .stat { background: white; border: 1px solid #EDE8E0; border-radius: 10px; padding: 16px 24px; flex: 1; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+  .stat .label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #8B8480; }
+  .stat .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+  .section { margin-bottom: 28px; }
+  .section-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.7px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #EDE8E0; }
+  .card { background: white; border: 1px solid #EDE8E0; border-radius: 10px; padding: 16px 20px; margin-bottom: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); display: flex; align-items: flex-start; gap: 16px; }
+  .card .badge { padding: 3px 10px; border-radius: 50px; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; white-space: nowrap; margin-top: 2px; }
+  .badge-high { background: #FEE2E2; color: #991B1B; }
+  .badge-medium { background: #FEF3C7; color: #92400E; }
+  .badge-low { background: #D1FAE5; color: #065F46; }
+  .card .info { flex: 1; }
+  .card .name { font-weight: 600; font-size: 14px; }
+  .card .company { font-size: 12px; color: #8B8480; margin-top: 2px; }
+  .card .reason { font-size: 12px; color: #4B5563; margin-top: 6px; font-style: italic; }
+  .card .meta-row { display: flex; gap: 16px; margin-top: 8px; }
+  .card .meta-item { font-size: 11px; color: #8B8480; }
+  .card .meta-item strong { color: #1A1A1A; }
+  .card .score { font-size: 24px; font-weight: 700; min-width: 48px; text-align: center; }
+  .score-high { color: #DC2626; }
+  .score-medium { color: #D97706; }
+  .score-low { color: #059669; }
+  .outreach { margin-top: 10px; background: #FAF8F5; border-radius: 6px; padding: 10px 12px; font-size: 11px; color: #374151; line-height: 1.5; border-left: 3px solid #CF6749; }
+  .outreach-label { font-size: 10px; font-weight: 700; color: #CF6749; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #EDE8E0; font-size: 11px; color: #8B8480; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Customer Churn Detection Report</h1>
+  <div class="meta">Run ID: {{ run_id }} &nbsp;·&nbsp; Generated: {{ generated_at }}</div>
+</div>
+
+<div class="stats">
+  <div class="stat">
+    <div class="label">Total Analysed</div>
+    <div class="value">{{ total_customers }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">High Risk</div>
+    <div class="value" style="color: #DC2626;">{{ high_risk | length }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Medium Risk</div>
+    <div class="value" style="color: #D97706;">{{ medium_risk | length }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Run Cost</div>
+    <div class="value" style="font-size: 20px;">${{ "%.4f" | format(total_cost) }}</div>
+  </div>
+</div>
+
+{% if high_risk %}
+<div class="section">
+  <div class="section-title" style="color: #DC2626;">⚠ High Risk — Immediate Action Required</div>
+  {% for c in high_risk %}
+  <div class="card">
+    <div class="score score-high">{{ c.health_score }}</div>
+    <div class="info">
+      <div class="name">{{ c.customer_name }} <span class="badge badge-high">HIGH</span></div>
+      <div class="company">{{ c.company }} · {{ c.plan | title }} · ${{ c.mrr }}/mo</div>
+      <div class="reason">{{ c.churn_reason }}</div>
+      <div class="meta-row">
+        <div class="meta-item">CSM: <strong>{{ c.csm_name }}</strong></div>
+        {% if c.score_delta is not none %}<div class="meta-item">Score delta: <strong>{{ c.score_delta }}</strong></div>{% endif %}
+        {% if c.risk_escalated %}<div class="meta-item" style="color:#DC2626;"><strong>↑ Risk escalated</strong></div>{% endif %}
+      </div>
+      {% if c.outreach_draft %}
+      <div class="outreach">
+        <div class="outreach-label">📧 Drafted Outreach — {{ c.outreach_subject }}</div>
+        {{ c.outreach_draft | truncate(300) }}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if medium_risk %}
+<div class="section">
+  <div class="section-title" style="color: #D97706;">Medium Risk — Monitor Closely</div>
+  {% for c in medium_risk %}
+  <div class="card">
+    <div class="score score-medium">{{ c.health_score }}</div>
+    <div class="info">
+      <div class="name">{{ c.customer_name }} <span class="badge badge-medium">MEDIUM</span></div>
+      <div class="company">{{ c.company }} · {{ c.plan | title }} · ${{ c.mrr }}/mo</div>
+      <div class="reason">{{ c.churn_reason }}</div>
+      <div class="meta-row">
+        <div class="meta-item">CSM: <strong>{{ c.csm_name }}</strong></div>
+        {% if c.score_delta is not none %}<div class="meta-item">Score delta: <strong>{{ c.score_delta }}</strong></div>{% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if low_risk %}
+<div class="section">
+  <div class="section-title" style="color: #059669;">Low Risk — Healthy</div>
+  {% for c in low_risk %}
+  <div class="card">
+    <div class="score score-low">{{ c.health_score }}</div>
+    <div class="info">
+      <div class="name">{{ c.customer_name }} <span class="badge badge-low">LOW</span></div>
+      <div class="company">{{ c.company }} · {{ c.plan | title }} · ${{ c.mrr }}/mo</div>
+      <div class="reason">{{ c.churn_reason }}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="footer">
+  Powered by Claude Sonnet 4.6 + LangGraph · Traced in Langfuse · {{ errors }} error(s) encountered
+</div>
+
+</body>
+</html>
