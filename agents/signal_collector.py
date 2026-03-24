@@ -44,7 +44,7 @@ def signal_collector_node(state: CustomerState) -> dict:
     for _ in range(MAX_ITERATIONS):
         response = with_rate_limit(
             client.messages.create,
-            model="claude-sonnet-4-6",
+            model="claude-haiku-4-5-20251001",
             max_tokens=1024,
             system=SYSTEM,
             tools=[SQL_TOOL],
@@ -79,7 +79,7 @@ def signal_collector_node(state: CustomerState) -> dict:
                         pass
             break
 
-    cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
+    cost = (input_tokens * 0.8 + output_tokens * 4) / 1_000_000
     return {
         **state,
         "signals": signals,

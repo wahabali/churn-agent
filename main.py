@@ -122,3 +122,15 @@ async def latest_report():
     if not report_path.exists():
         raise HTTPException(status_code=404, detail="No report generated yet. Run POST /run first.")
     return HTMLResponse(content=report_path.read_text())
+
+
+@app.get("/report/latest.md")
+async def latest_report_markdown():
+    report_path = Path("data/reports/latest.md")
+    if not report_path.exists():
+        raise HTTPException(status_code=404, detail="No report generated yet. Run POST /run first.")
+    return FileResponse(
+        path=str(report_path),
+        media_type="text/markdown",
+        filename="churn-report.md",
+    )
