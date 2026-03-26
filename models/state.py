@@ -63,6 +63,7 @@ class OrchestratorState(TypedDict):
     high_risk_customers: Optional[list]
     medium_risk_customers: Optional[list]
     low_risk_customers: Optional[list]
+    approved_outreach: Optional[list]   # customer states approved by human reviewer
     html_report: Optional[str]
     report_path: Optional[str]
     total_tokens_used: int

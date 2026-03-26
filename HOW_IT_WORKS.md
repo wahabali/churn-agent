@@ -23,15 +23,17 @@ A complete guide to understanding, running, and modifying this system.
 
 Every time you trigger a run (via API or on a schedule):
 
-1. It loads all 20 customers from the database
+1. It loads all customers from the database (3 in dev mode, all 20 in production)
 2. For each customer **in parallel**, Claude queries the database to collect behaviour signals (logins, feature use, payment failures, etc.)
 3. Claude scores each customer's health 0–100 and assigns HIGH / MEDIUM / LOW risk
 4. It compares the new score against the last stored score — if nothing changed meaningfully, it does nothing
 5. For customers whose score changed or risk escalated, it takes action
 6. HIGH risk customers get a personalised outreach email drafted by Claude
-7. Everything is saved to the database, a report is generated, and a summary is printed
+7. **The agent pauses** — it presents a review UI where a human can approve, edit, or skip each draft
+8. After the human submits their decisions, the agent resumes and logs only the approved outreach
+9. A report is generated and a run summary is printed
 
-The key point: it **remembers** history. Run it today, it stores scores. Run it tomorrow, it only acts on customers whose situation has changed. That's what makes it agentic — not just a one-shot prompt.
+The key point: it **remembers** history and **includes humans in the loop**. AI handles the detection and drafting. Humans retain control over what actually gets sent.
 
 ---
 
@@ -48,7 +50,7 @@ The key point: it **remembers** history. Run it today, it stores scores. Run it 
 
 | Library | What it does |
 |---|---|
-| `fastapi` | The REST API framework. Provides POST /run, GET /status, GET /customers, GET /report/latest |
+| `fastapi` | The REST API framework. Provides POST /run, GET /status, GET /review, POST /resume, GET /customers, GET /report/latest |
 | `uvicorn` | The server that runs FastAPI. Think of it as the engine that powers the API. |
 | `pydantic` | Data validation. FastAPI uses it to validate request/response shapes. |
 
@@ -105,8 +107,8 @@ churn-agent/
 │   └── report_agent.py      ← Generates HTML and Markdown reports
 │
 ├── graph/
-│   ├── orchestrator.py      ← Builds the LangGraph graph, defines the flow
-│   └── nodes.py             ← Non-AI nodes: change_detector, action_router, notifier
+│   ├── orchestrator.py      ← Builds the LangGraph graph + MemorySaver checkpointer
+│   └── nodes.py             ← Non-AI nodes: change_detector, action_router, approval_gate, notifier
 │
 ├── reports/
 │   └── templates/
@@ -149,15 +151,15 @@ LangGraph builds a directed graph of nodes. Each node is a function. Edges defin
 START
   │
   ▼
-[orchestrator_node]         ← Loads all customers from DB, creates one job per customer
+[orchestrator_node]         ← Loads customers from DB (3 in dev, 20 in prod)
   │
   │  Send API (parallel)
   ├──────────────────────────────────────────────────┐
   ▼                                                  ▼
-[process_customer] × 20    ← Each customer runs simultaneously
+[process_customer] × N     ← Each customer runs simultaneously
   │                          signal_collector → health_scorer → returns result
   └──────────────────────────────────────────────────┘
-  │  (all 20 results merge into one list)
+  │  (all results merge into one list)
   ▼
 [aggregate_results]        ← Totals up tokens and cost
   │
@@ -171,11 +173,16 @@ START
   │  Send API (parallel, HIGH risk only)
   ├──────────────────────────────────────────────────┐
   ▼                                                  ▼
-[process_outreach] × N     ← Each HIGH risk customer gets an email drafted
+[process_outreach] × M     ← Each HIGH risk customer gets an email drafted
   └──────────────────────────────────────────────────┘
   │  (outreach results merge back in)
   ▼
-[merge_outreach]           ← Logs all outreach drafts to the outreach_log table
+[approval_gate] ⏸          ← INTERRUPT — graph pauses here
+  │                          Human reviews drafts at GET /review/{run_id}
+  │                          Human submits decisions via POST /resume/{run_id}
+  │                          Graph resumes with approved_ids
+  ▼
+[merge_outreach]           ← Logs only human-approved drafts to outreach_log
   │
   ▼
 [report_agent]             ← Generates HTML + Markdown report files
@@ -187,11 +194,12 @@ START
 END
 ```
 
-**Key concept — two levels of parallelism:**
-- Level 1: all 20 customers processed at the same time
-- Level 2: all HIGH risk outreach emails drafted at the same time
+**Key concept — two levels of parallelism + one human checkpoint:**
+- Level 1: all customers processed at the same time (Send API)
+- Level 2: all HIGH risk outreach emails drafted at the same time (Send API)
+- Checkpoint: graph suspends at `approval_gate`, resumes only after human approval
 
-Both use LangGraph's `Send` API (explained in section 8).
+All three use LangGraph primitives — `Send` API for fan-out, `interrupt()` for HITL, `MemorySaver` checkpointer to persist state across the pause.
 
 ---
 
@@ -268,6 +276,26 @@ Not a Claude agent — pure Python. Reads the final state and:
 2. Builds a Markdown string directly in Python → saves `data/reports/latest.md`
 
 **To modify:** Edit `reports/templates/digest.html.jinja2` for the HTML report. Edit `_build_markdown()` in `report_agent.py` for the Markdown format.
+
+---
+
+### Approval Gate — Human-in-the-Loop (`graph/nodes.py`)
+
+Not a Claude agent — a LangGraph interrupt point. After all outreach emails are drafted, this node calls `interrupt()` to suspend the graph mid-execution.
+
+```python
+decisions = interrupt({"pending_outreach": pending})
+approved_ids = set(decisions.get("approved_ids", []))
+```
+
+The graph state is persisted to `MemorySaver` (the checkpointer). The FastAPI layer then:
+- Returns status `awaiting_approval` with the pending drafts
+- Serves a review UI at `GET /review/{run_id}`
+- Accepts `POST /resume/{run_id}` with `{"approved_ids": [...]}` to resume
+
+When resumed, the graph picks up exactly where it left off — no data is re-processed. Only approved customers are passed to `merge_outreach_node`.
+
+If there are no HIGH risk customers, the gate passes through immediately with no interrupt.
 
 ---
 

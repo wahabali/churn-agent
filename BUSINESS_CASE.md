@@ -102,9 +102,10 @@ The difference between a tool that shows you problems and an agent that finds an
 - **Parallel processing** — all customers analysed simultaneously, not sequentially. 20 customers in ~90 seconds.
 - **Persistent memory** — scores are stored after every run. The agent knows history and only acts on meaningful changes (prevents alert fatigue).
 - **Agentic tool use** — the signal collection agent autonomously decides which database queries to run. It reasons about what data it needs, not just executes a fixed script.
+- **Human-in-the-Loop (HITL)** — before any outreach draft is logged, the agent pauses and presents a review UI at `GET /review/{run_id}`. A CSM can approve, edit, or skip each email. The LangGraph graph resumes only after a human confirms via `POST /resume/{run_id}`. AI proposes. Human decides.
 - **Cost-optimised model routing** — uses Claude Haiku for data collection (tool-calling, no reasoning required) and Claude Sonnet for scoring and writing (reasoning and quality required). Result: 5× cost reduction with no quality loss.
 - **Full observability** — every agent call, token, cost, and decision is tracked in LangSmith with a live execution waterfall.
-- **REST API** — trigger runs, check status, retrieve reports via standard HTTP endpoints. Integrates with any existing tooling.
+- **REST API** — trigger runs, check status, review outreach, and retrieve reports via standard HTTP endpoints. Integrates with any existing tooling.
 - **Change detection** — the system only triggers outreach when a customer's score drops by more than 10 points, or their risk level escalates. No spam. No noise.
 
 ---

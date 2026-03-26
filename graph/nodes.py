@@ -1,5 +1,6 @@
-"""Non-LLM nodes: change_detector, action_router, notifier."""
+"""Non-LLM nodes: change_detector, action_router, approval_gate, notifier."""
 from datetime import datetime
+from langgraph.types import interrupt
 from db.database import execute_query, execute_write
 from models.state import OrchestratorState
 
@@ -73,15 +74,36 @@ def action_router_node(state: OrchestratorState) -> dict:
     return {}
 
 
+def approval_gate_node(state: OrchestratorState) -> dict:
+    """Pause for human review of outreach drafts before logging to DB.
+
+    Uses LangGraph interrupt() to suspend graph execution. The FastAPI layer
+    serves a review UI at GET /review/{run_id}. On submit, POST /resume/{run_id}
+    resumes the graph with the human's approved_ids decision.
+    """
+    pending = [
+        c for c in state.get("customer_results", [])
+        if c.get("outreach_draft")
+    ]
+    if not pending:
+        # No outreach drafts — skip straight through
+        return {"approved_outreach": []}
+
+    # Suspend graph here. `decisions` is the value passed back by POST /resume.
+    decisions = interrupt({"pending_outreach": pending})
+    approved_ids = set(decisions.get("approved_ids", []))
+    approved = [c for c in pending if c["customer_id"] in approved_ids]
+    return {"approved_outreach": approved}
+
+
 def merge_outreach_node(state: OrchestratorState) -> dict:
-    """Log outreach drafts to DB. customer_results already merged via reducer."""
-    for customer in state.get("customer_results", []):
-        if customer.get("outreach_draft"):
-            execute_write(
-                "INSERT INTO outreach_log (customer_id, subject, draft, created_at) VALUES (?, ?, ?, ?)",
-                (customer["customer_id"], customer.get("outreach_subject", ""),
-                 customer["outreach_draft"], datetime.utcnow().isoformat())
-            )
+    """Log only human-approved outreach drafts to DB."""
+    for customer in state.get("approved_outreach") or []:
+        execute_write(
+            "INSERT INTO outreach_log (customer_id, subject, draft, created_at) VALUES (?, ?, ?, ?)",
+            (customer["customer_id"], customer.get("outreach_subject", ""),
+             customer["outreach_draft"], datetime.utcnow().isoformat())
+        )
     return {}
 
 
@@ -90,10 +112,12 @@ def notifier_node(state: OrchestratorState) -> dict:
     high = len(state.get("high_risk_customers", []) or [])
     medium = len(state.get("medium_risk_customers", []) or [])
     total = len(state.get("customer_results", []))
+    approved = len(state.get("approved_outreach") or [])
     print(f"\n{'='*50}")
     print(f"Churn Detection Run Complete — {state['run_id']}")
     print(f"Customers processed: {total}")
     print(f"HIGH risk: {high} | MEDIUM risk: {medium}")
+    print(f"Outreach approved: {approved}")
     print(f"Total cost: ${state.get('total_cost_usd', 0):.4f}")
     print(f"{'='*50}\n")
     return {"status": "complete", "completed_at": datetime.utcnow().isoformat()}

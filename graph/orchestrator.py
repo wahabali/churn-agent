@@ -1,10 +1,15 @@
 """Full orchestration graph."""
+import os
 from datetime import datetime
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send
+from langgraph.checkpoint.memory import MemorySaver
 from models.state import OrchestratorState, CustomerState
 from db.database import execute_query
-from graph.nodes import change_detector_node, action_router_node, merge_outreach_node, notifier_node
+from graph.nodes import (
+    change_detector_node, action_router_node,
+    approval_gate_node, merge_outreach_node, notifier_node,
+)
 from agents.signal_collector import signal_collector_node
 from agents.health_scorer import health_scorer_node
 from agents.outreach_drafter import outreach_drafter_node
@@ -25,6 +30,9 @@ def orchestrator_node(state: OrchestratorState) -> list[Send]:
     rows = execute_query(
         "SELECT id, name, company, plan, mrr, signup_date, csm_name FROM customers"
     )
+    if os.getenv("ENV") == "dev":
+        limit = int(os.getenv("DEV_CUSTOMER_LIMIT", "3"))
+        rows = rows[:limit]
     sends = []
     for row in rows:
         customer_state = CustomerState(
@@ -76,6 +84,10 @@ def process_outreach(state: CustomerState) -> dict:
     return {"customer_results": [result]}
 
 
+# Shared checkpointer — persists graph state so runs can be resumed after interrupt
+checkpointer = MemorySaver()
+
+
 def build_graph():
     builder = StateGraph(OrchestratorState)
 
@@ -84,6 +96,7 @@ def build_graph():
     builder.add_node("change_detector", change_detector_node)
     builder.add_node("action_router", action_router_node)
     builder.add_node("process_outreach", process_outreach)
+    builder.add_node("approval_gate", approval_gate_node)
     builder.add_node("merge_outreach", merge_outreach_node)
     builder.add_node("report_agent", report_agent_node)
     builder.add_node("notifier", notifier_node)
@@ -95,18 +108,20 @@ def build_graph():
     builder.add_edge("aggregate_results", "change_detector")
     builder.add_edge("change_detector", "action_router")
 
-    # Fan-out: outreach per HIGH risk customer, or skip to merge
+    # Fan-out: outreach per HIGH risk customer, or skip straight to approval_gate
     builder.add_conditional_edges(
         "action_router",
         lambda state: [Send("process_outreach", c) for c in state.get("high_risk_customers", [])]
-        if state.get("high_risk_customers") else "merge_outreach"
+        if state.get("high_risk_customers") else "approval_gate"
     )
-    builder.add_edge("process_outreach", "merge_outreach")
+    # Fan-in from outreach drafting → human review gate
+    builder.add_edge("process_outreach", "approval_gate")
+    builder.add_edge("approval_gate", "merge_outreach")
     builder.add_edge("merge_outreach", "report_agent")
     builder.add_edge("report_agent", "notifier")
     builder.add_edge("notifier", END)
 
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)
 
 
 graph = build_graph()
